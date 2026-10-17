@@ -18,7 +18,9 @@ export function readFileAsDataURL(file) {
  * Replaces an <input type="file">'s FileList with a single file, so a
  * file produced client-side (e.g. by normalizeOrientation()) becomes what
  * actually gets submitted with the form. Browsers without DataTransfer
- * support (or that restrict assigning `.files`) leave the input untouched.
+ * support (or that restrict assigning `.files`) leave the input untouched —
+ * check the return value if your upload path relies on the native form
+ * submission rather than sending the file you got from `onChange` directly.
  *
  * @param {HTMLInputElement} inputEl
  * @param {File} file
@@ -42,24 +44,39 @@ export function syncInputFiles(inputEl, file) {
  * instead of the raw file, which browsers can't even decode for HEIC/HEIF,
  * and which may still need an EXIF rotation applied.
  *
- * Handles the case of the user picking a second file while the first one
- * is still being normalized: only the most recent selection ever reaches
- * the preview or validate/onChange callbacks.
+ * Every invocation of the `change` handler invalidates any earlier one still
+ * in flight — regardless of how it concludes (no file, a rejected file, or a
+ * normalized one) — so a slow normalization for a since-superseded selection
+ * can never land after the fact and overwrite a newer or reverted selection.
  *
  * @param {HTMLInputElement} inputEl
  * @param {HTMLImageElement} imgEl
  * @param {{
  *   validate?: (file: File) => boolean,
  *   onInvalid?: (file: File) => void,
- *   onChange?: (file: File) => void,
+ *   onChange?: (file: File, meta: { filesSynced: boolean }) => void,
  *   quality?: number,
  * }} [options]
- * @returns {() => void} detach function; removes the wired listener
+ * @returns {() => void} detach function; removes the wired listener and
+ *   releases the current preview's object URL, if any.
  */
 export function attachImagePreview(inputEl, imgEl, options = {}) {
     let requestId = 0;
+    let currentObjectUrl = null;
+
+    function releaseCurrentObjectUrl() {
+        if (currentObjectUrl) {
+            URL.revokeObjectURL(currentObjectUrl);
+            currentObjectUrl = null;
+        }
+    }
 
     const handleChange = async (event) => {
+        // Bumped unconditionally, before any validation or early return, so
+        // *every* selection — including an empty or rejected one — retires
+        // whatever selection came before it, not just a successful one.
+        const thisRequestId = ++requestId;
+
         const input = event.target;
         const selectedFile = input.files && input.files[0];
         if (!selectedFile) return;
@@ -69,25 +86,38 @@ export function attachImagePreview(inputEl, imgEl, options = {}) {
             return;
         }
 
-        const thisRequestId = ++requestId;
         const normalized = await normalizeOrientation(selectedFile, { quality: options.quality });
-
-        // A newer selection (or a reset — see cancelPreview()) arrived while
-        // this one was still normalizing: drop this one silently.
         if (thisRequestId !== requestId) return;
 
-        syncInputFiles(input, normalized);
+        const filesSynced = syncInputFiles(input, normalized);
 
-        let dataUrl;
-        try {
-            dataUrl = await readFileAsDataURL(normalized);
-        } catch {
-            return;
+        // Prefer an object URL over a data: URL for the preview — a data:
+        // URL holds the entire base64-encoded image as a JS string, which
+        // for a large photo is meaningfully more memory than a lightweight
+        // object URL the browser manages for us.
+        const supportsObjectUrl = typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function';
+        let previewSrc = null;
+        if (supportsObjectUrl) {
+            try {
+                previewSrc = URL.createObjectURL(normalized);
+            } catch {
+                previewSrc = null;
+            }
         }
-        if (thisRequestId !== requestId) return;
+        if (previewSrc === null) {
+            try {
+                previewSrc = await readFileAsDataURL(normalized);
+            } catch {
+                return;
+            }
+            if (thisRequestId !== requestId) return;
+        }
 
-        imgEl.src = dataUrl;
-        if (typeof options.onChange === 'function') options.onChange(normalized);
+        releaseCurrentObjectUrl();
+        currentObjectUrl = supportsObjectUrl ? previewSrc : null;
+        imgEl.src = previewSrc;
+
+        if (typeof options.onChange === 'function') options.onChange(normalized, { filesSynced });
     };
 
     inputEl.addEventListener('change', handleChange);
@@ -95,5 +125,6 @@ export function attachImagePreview(inputEl, imgEl, options = {}) {
     return function detach() {
         requestId += 1; // invalidate any selection still normalizing
         inputEl.removeEventListener('change', handleChange);
+        releaseCurrentObjectUrl();
     };
 }

@@ -91,6 +91,72 @@ test('normalizeOrientation returns the original file when no browser APIs are av
     assert.equal(result, file);
 });
 
+test('a WebP source re-encoded to JPEG is renamed .jpg, not left as .webp', async (t) => {
+    installFakeDocument('NORMALIZED-FROM-WEBP');
+    globalThis.createImageBitmap = async () => ({ width: 4, height: 4, close() {} });
+    t.after(uninstallFakeDom);
+
+    const original = new File(['WEBP-BYTES'], 'photo.webp', { type: 'image/webp' });
+    const result = await normalizeOrientation(original);
+
+    assert.equal(result.type, 'image/jpeg', 'the actual re-encoded bytes are JPEG');
+    assert.equal(result.name, 'photo.jpg', 'the extension must match the real content, not the source format');
+});
+
+test('a BMP source with no extension at all still gets a usable .jpg name', async (t) => {
+    installFakeDocument('NORMALIZED-NO-EXT');
+    globalThis.createImageBitmap = async () => ({ width: 2, height: 2, close() {} });
+    t.after(uninstallFakeDom);
+
+    const original = new File(['BMP-BYTES'], 'photo', { type: 'image/bmp' });
+    const result = await normalizeOrientation(original);
+
+    assert.equal(result.name, 'photo.jpg');
+});
+
+test('a HEIC file with an empty file.type (seen on some Android browsers) is still normalized via its extension', async (t) => {
+    installFakeDocument('NORMALIZED-FROM-TYPELESS-HEIC');
+    globalThis.createImageBitmap = async () => ({ width: 6, height: 6, close() {} });
+    t.after(uninstallFakeDom);
+
+    // No `type` at all — the real-world failure mode this guards against.
+    const original = new File(['HEIC-BYTES'], 'IMG_0002.heic', { type: '' });
+    const result = await normalizeOrientation(original);
+
+    assert.notEqual(result, original, 'must not be silently skipped just because file.type is empty');
+    assert.equal(result.type, 'image/jpeg');
+    assert.equal(result.name, 'IMG_0002.jpg');
+});
+
+test('an out-of-range quality option falls back to the default instead of being passed through as-is', async (t) => {
+    installFakeDocument('IGNORED');
+    let seenQuality = null;
+    globalThis.document.createElement = (tag) => {
+        if (tag !== 'canvas') return {};
+        return {
+            width: 0,
+            height: 0,
+            getContext: () => ({ drawImage() {} }),
+            toBlob(callback, type, quality) {
+                seenQuality = quality;
+                callback(new Blob(['x'], { type }));
+            },
+        };
+    };
+    globalThis.createImageBitmap = async () => ({ width: 1, height: 1, close() {} });
+    t.after(uninstallFakeDom);
+
+    const file = new File(['x'], 'a.jpg', { type: 'image/jpeg' });
+    await normalizeOrientation(file, { quality: 5 });
+    assert.equal(seenQuality, 0.95);
+
+    await normalizeOrientation(file, { quality: -1 });
+    assert.equal(seenQuality, 0.95);
+
+    await normalizeOrientation(file, { quality: 0.5 });
+    assert.equal(seenQuality, 0.5, 'a valid quality must still be honored');
+});
+
 test('normalizeOrientation falls back to the <img> + canvas path when createImageBitmap is unavailable', async (t) => {
     installFakeDocument('NORMALIZED-VIA-IMG-ELEMENT');
     t.after(uninstallFakeDom);

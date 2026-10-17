@@ -11,20 +11,45 @@
  * leaves the browser: it decodes the image respecting EXIF orientation,
  * redraws it onto a canvas (which bakes the correct orientation into the
  * pixels and drops the now-redundant EXIF tag), and returns a new File.
- * HEIC/HEIF files are converted to JPEG in the same pass, since most
- * browsers cannot decode or display HEIC directly.
+ * HEIC/HEIF files are converted to JPEG in the same pass wherever the
+ * browser can decode HEIC at all (this is not every browser — see
+ * viaImageElement() below) — it is a best-effort conversion, not a
+ * guarantee. A browser that can't decode the source format at all gets the
+ * original file back unchanged; check the result's `type`/`name` if your
+ * code needs to know whether conversion actually happened.
  */
-
-const HEIC_HEIF_EXTENSION = /\.(heic|heif)$/i;
 
 /**
+ * Some environments (certain Android browsers in particular) report an
+ * empty `file.type` for a real HEIC/HEIF photo. Falls back to the filename
+ * extension in that case only — a declared MIME type always wins, since an
+ * extension alone is never proof of the actual format.
+ *
  * @param {File|Blob} file
+ * @returns {string} a lowercase `image/...` MIME type, or '' if unknown.
+ */
+function resolveImageType(file) {
+    const declared = String(file.type || '').toLowerCase();
+    if (declared) return declared;
+
+    const name = String(file.name || '').toLowerCase();
+    if (/\.png$/.test(name)) return 'image/png';
+    if (/\.(heic|heif)$/.test(name)) return 'image/heic';
+    if (/\.(jpe?g)$/.test(name)) return 'image/jpeg';
+    if (/\.webp$/.test(name)) return 'image/webp';
+    if (/\.bmp$/.test(name)) return 'image/bmp';
+    if (/\.avif$/.test(name)) return 'image/avif';
+    if (/\.gif$/.test(name)) return 'image/gif';
+    if (/\.svg$/.test(name)) return 'image/svg+xml';
+    return '';
+}
+
+/**
+ * @param {string} type a resolved `image/...` MIME type (see resolveImageType)
  * @returns {boolean} true if this looks like a raster image worth normalizing.
  */
-function isNormalizableImage(file) {
-    if (!file || typeof file !== 'object') return false;
-    const type = String(file.type || '').toLowerCase();
-    if (!type.startsWith('image/')) return false;
+function isNormalizableImage(type) {
+    if (!type || !type.startsWith('image/')) return false;
     // SVG has no pixel orientation to fix, and re-rasterizing a GIF would
     // destroy its animation — leave both untouched.
     if (type === 'image/svg+xml' || type === 'image/gif') return false;
@@ -32,7 +57,7 @@ function isNormalizableImage(file) {
 }
 
 /**
- * @param {string} type original MIME type
+ * @param {string} type original (or extension-inferred) MIME type
  * @returns {string} the MIME type to re-encode to (PNG stays PNG; everything
  *   else, including HEIC/HEIF, becomes JPEG, since that's universally
  *   displayable and most source photos are already lossy).
@@ -41,12 +66,18 @@ function targetTypeFor(type) {
     return type === 'image/png' ? 'image/png' : 'image/jpeg';
 }
 
-function targetNameFor(file) {
-    const originalName = file.name || 'image.jpg';
-    // Only HEIC/HEIF needs renaming: it's the one format this module always
-    // converts away from. Every other extension (.jpg, .png, ...) already
-    // matches what canvas.toBlob() re-encodes to, so it's left as-is.
-    return originalName.replace(HEIC_HEIF_EXTENSION, '.jpg');
+/**
+ * Builds the output filename from `targetType`, not from the original
+ * extension: canvas.toBlob() always re-encodes to `targetType` regardless of
+ * what the source file was named, so e.g. a `.webp` source re-encoded to
+ * JPEG must end up named `.jpg` — otherwise the extension would lie about
+ * the actual file content.
+ */
+function targetNameFor(file, targetType) {
+    const extension = targetType === 'image/png' ? '.png' : '.jpg';
+    const originalName = file.name || 'image';
+    const baseName = originalName.replace(/\.[^./\\]+$/, '');
+    return (baseName || 'image') + extension;
 }
 
 function canvasToBlob(canvas, type, quality) {
@@ -56,7 +87,7 @@ function canvasToBlob(canvas, type, quality) {
 }
 
 function buildNormalizedFile(originalFile, blob, targetType) {
-    const name = targetNameFor(originalFile);
+    const name = targetNameFor(originalFile, targetType);
     const normalized = new File([blob], name, {
         type: targetType,
         lastModified: Date.now(),
@@ -91,9 +122,12 @@ async function viaCreateImageBitmap(file, targetType, quality) {
  * option: decode through a plain <img>, which already applies EXIF
  * orientation when painting (per the CSS `image-orientation: from-image`
  * default most browsers ship), then redraw onto a canvas to bake it in.
- * This path cannot decode HEIC/HEIF (no native <img> support), so those
- * files are returned unchanged here — createImageBitmap is the only path
- * able to convert them.
+ * Most browsers (Chromium, Firefox) cannot decode HEIC/HEIF in an <img> at
+ * all, so those files come back unchanged here. Safari is an exception — it
+ * decodes HEIC/HEIF natively in both <img> and createImageBitmap() — so HEIC
+ * conversion is NOT guaranteed across browsers in general: check the
+ * returned file's `type`/`name` (or `__orientationNormalized`) if your code
+ * needs to know whether conversion actually happened.
  */
 function viaImageElement(file, targetType, quality) {
     return new Promise((resolve, reject) => {
@@ -142,13 +176,17 @@ function viaImageElement(file, targetType, quality) {
  * @returns {Promise<File>}
  */
 export async function normalizeOrientation(file, options = {}) {
-    if (!isNormalizableImage(file)) return file;
+    if (!file || typeof file !== 'object') return file;
     if (file.__orientationNormalized) return file;
+
+    const type = resolveImageType(file);
+    if (!isNormalizableImage(type)) return file;
     if (typeof document === 'undefined' || typeof document.createElement !== 'function') return file;
 
-    const type = String(file.type || '').toLowerCase();
     const targetType = targetTypeFor(type);
-    const quality = typeof options.quality === 'number' ? options.quality : 0.95;
+    const quality = typeof options.quality === 'number' && options.quality > 0 && options.quality <= 1
+        ? options.quality
+        : 0.95;
 
     if (typeof createImageBitmap === 'function') {
         try {
