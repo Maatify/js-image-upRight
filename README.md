@@ -1,4 +1,4 @@
-# @maatify/image-upright
+# maatify-image-upright
 
 A small, dependency-free client-side toolkit for handling image uploads correctly:
 
@@ -13,7 +13,7 @@ No dependencies, no build step. Plain ES modules, runs directly in any modern br
 ## Install
 
 ```bash
-npm install @maatify/image-upright
+npm install maatify-image-upright
 ```
 
 ## Usage
@@ -21,7 +21,7 @@ npm install @maatify/image-upright
 ### Wire a file input to a live, corrected preview
 
 ```js
-import { attachImagePreview } from '@maatify/image-upright';
+import { attachImagePreview } from 'maatify-image-upright';
 
 const input = document.querySelector('input[type="file"]');
 const preview = document.querySelector('img#preview');
@@ -41,7 +41,7 @@ const detach = attachImagePreview(input, preview, {
 ### Just the orientation/HEIC fix, without wiring a preview
 
 ```js
-import { normalizeOrientation } from '@maatify/image-upright';
+import { normalizeOrientation } from 'maatify-image-upright';
 
 const fixedFile = await normalizeOrientation(file);
 ```
@@ -49,7 +49,7 @@ const fixedFile = await normalizeOrientation(file);
 ### Retry a signed URL that might briefly 404 right after upload
 
 ```js
-import { loadImageWithRetry, cancelImageRetry } from '@maatify/image-upright';
+import { loadImageWithRetry, cancelImageRetry } from 'maatify-image-upright';
 
 loadImageWithRetry(imgEl, signedUrl, {
   onGiveUp: () => showBrokenImagePlaceholder(),
@@ -63,7 +63,7 @@ cancelImageRetry(imgEl);
 ### Upload with progress and the ability to cancel
 
 ```js
-import { uploadWithProgress } from '@maatify/image-upright';
+import { uploadWithProgress } from 'maatify-image-upright';
 
 const { promise, abort } = uploadWithProgress('/api/upload', formData, {
   onProgress: (percent) => progressBar.style.width = percent + '%',
