@@ -3,7 +3,7 @@
 A small, dependency-free client-side toolkit for handling image uploads correctly:
 
 - **EXIF orientation correction** — iPhones (and most cameras) save a photo in its raw sensor orientation and record the correct display orientation in an EXIF tag instead of rotating the pixels. Most server-side pipelines ignore that tag, so the photo ends up stored sideways. `normalizeOrientation()` bakes the correct orientation into the pixels before the file ever leaves the browser.
-- **HEIC/HEIF → JPEG conversion** — the default format for iPhone photos, which most browsers can't even display. Converted in the same pass as the orientation fix.
+- **HEIC/HEIF → JPEG conversion** — the default format for iPhone photos, which most browsers can't even display. Converted in the same pass as the orientation fix, on every browser that can decode HEIC at all (this is best-effort, not a guarantee — see [`normalizeOrientation`](#api)).
 - **A preview that matches the upload** — `attachImagePreview()` shows the user the *actual* file that will be uploaded (normalized, converted), not the raw one, and keeps the `<input>`'s `FileList` in sync so there's no mismatch between what's shown and what's sent.
 - **Resilient image loading** — `loadImageWithRetry()` retries a signed/presigned URL a few times with a growing delay, for the common case where an object briefly 404s right after upload before becoming readable from every storage node.
 - **Upload with progress** — `uploadWithProgress()` wraps `XMLHttpRequest` to give you upload progress and the ability to abort, which `fetch()` still doesn't support natively.
@@ -29,9 +29,12 @@ const preview = document.querySelector('img#preview');
 const detach = attachImagePreview(input, preview, {
   validate: (file) => file.size <= 10 * 1024 * 1024,
   onInvalid: (file) => alert('File too large: ' + file.name),
-  onChange: (normalizedFile) => {
-    // normalizedFile is what input.files[0] now holds too (when the browser
-    // allows replacing it) — submit the form as usual.
+  onChange: (normalizedFile, { filesSynced }) => {
+    // filesSynced is true when input.files[0] now holds normalizedFile too
+    // (so a plain form submit will send it). When the browser didn't allow
+    // replacing the FileList, filesSynced is false and input.files[0] is
+    // still the original, unprocessed file — upload normalizedFile directly
+    // (e.g. with uploadWithProgress()) instead of relying on the form.
   },
 });
 
@@ -78,7 +81,7 @@ const { status, responseText } = await promise;
 | Export | Signature |
 |---|---|
 | `normalizeOrientation` | `(file: File, options?: { quality?: number }) => Promise<File>` |
-| `attachImagePreview` | `(inputEl, imgEl, options?) => () => void` (returns a detach function) |
+| `attachImagePreview` | `(inputEl, imgEl, options?: { validate?, onInvalid?, onChange?: (file, { filesSynced }) => void, quality? }) => () => void` (returns a detach function) |
 | `syncInputFiles` | `(inputEl, file: File) => boolean` |
 | `readFileAsDataURL` | `(file: Blob) => Promise<string>` |
 | `loadImageWithRetry` | `(imgEl, src: string, options?: { delays?: number[], onGiveUp?: () => void }) => void` |
