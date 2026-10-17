@@ -1,4 +1,17 @@
-# maatify-image-upright
+[pkg]: <https://www.npmjs.com/package/maatify-image-upright>
+[pkg-stats]: <https://www.npmjs.com/package/maatify-image-upright>
+
+# **maatify-image-upright**
+
+![**Maatify.dev**](https://www.maatify.dev/assets/img/img/maatify_logo_white.svg)
+---
+[![npm version](https://img.shields.io/npm/v/maatify-image-upright)][pkg]
+[![node](https://img.shields.io/node/v/maatify-image-upright)][pkg]
+[![Monthly Downloads](https://img.shields.io/npm/dm/maatify-image-upright)][pkg-stats]
+[![Total Downloads](https://img.shields.io/npm/dt/maatify-image-upright)][pkg-stats]
+[![Stars](https://img.shields.io/github/stars/Maatify/js-image-upRight)](https://github.com/Maatify/js-image-upRight/stargazers)
+
+---
 
 A small, dependency-free client-side toolkit for handling image uploads correctly:
 
