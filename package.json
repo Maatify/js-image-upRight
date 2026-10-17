@@ -1,0 +1,43 @@
+{
+  "name": "@maatify/image-upright",
+  "version": "0.1.0",
+  "description": "Client-side image upload helper: EXIF orientation correction, HEIC/HEIF conversion, a preview that always matches what gets uploaded, retrying a signed URL that briefly fails to load, and upload with progress.",
+  "type": "module",
+  "main": "src/index.js",
+  "module": "src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test"
+  },
+  "keywords": [
+    "image",
+    "upload",
+    "exif",
+    "orientation",
+    "heic",
+    "heif",
+    "preview",
+    "retry",
+    "upright"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Maatify/js-image-upRight.git"
+  },
+  "homepage": "https://github.com/Maatify/js-image-upRight#readme",
+  "bugs": {
+    "url": "https://github.com/Maatify/js-image-upRight/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "sideEffects": false
+}
