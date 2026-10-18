@@ -24,6 +24,10 @@ class FakeXMLHttpRequest {
         if (typeof this.onabort === 'function') this.onabort();
     }
     // Test helper, not part of the real XHR API.
+    timedOut() {
+        if (typeof this.ontimeout === 'function') this.ontimeout();
+    }
+    // Test helper, not part of the real XHR API.
     respond(status, responseText) {
         this.status = status;
         this.responseText = responseText;
@@ -128,4 +132,55 @@ test('sends custom method and headers', async (t) => {
 
     assert.equal(xhr.method, 'PUT');
     assert.equal(xhr.requestHeaders['X-Custom'], '1');
+});
+
+test('sets xhr.timeout when a timeout option is given', async (t) => {
+    installFakeXhr();
+    t.after(uninstallFakeXhr);
+
+    const { promise } = uploadWithProgress('/api/upload', 'body', { timeout: 5000 });
+    const xhr = FakeXMLHttpRequest.instances[0];
+
+    assert.equal(xhr.timeout, 5000);
+    xhr.respond(200, 'ok');
+    await promise;
+});
+
+test('leaves xhr.timeout unset when no timeout option is given', async (t) => {
+    installFakeXhr();
+    t.after(uninstallFakeXhr);
+
+    const { promise } = uploadWithProgress('/api/upload', 'body');
+    const xhr = FakeXMLHttpRequest.instances[0];
+
+    assert.equal(xhr.timeout, undefined);
+    xhr.respond(200, 'ok');
+    await promise;
+});
+
+test('ontimeout rejects the promise with a timedOut error', async (t) => {
+    installFakeXhr();
+    t.after(uninstallFakeXhr);
+
+    const { promise } = uploadWithProgress('/api/upload', 'body', { timeout: 5000 });
+    const xhr = FakeXMLHttpRequest.instances[0];
+    xhr.timedOut();
+
+    await assert.rejects(promise, (err) => {
+        assert.equal(err.timedOut, true);
+        assert.equal(err.aborted, undefined, 'a timeout is not the same as an explicit abort()');
+        return true;
+    });
+});
+
+test('a non-positive timeout option is ignored rather than passed through as-is', async (t) => {
+    installFakeXhr();
+    t.after(uninstallFakeXhr);
+
+    const { promise } = uploadWithProgress('/api/upload', 'body', { timeout: 0 });
+    const xhr = FakeXMLHttpRequest.instances[0];
+
+    assert.equal(xhr.timeout, undefined);
+    xhr.respond(200, 'ok');
+    await promise;
 });

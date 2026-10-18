@@ -83,10 +83,17 @@ import { uploadWithProgress } from 'maatify-image-upright';
 
 const { promise, abort } = uploadWithProgress('/api/upload', formData, {
   onProgress: (percent) => progressBar.style.width = percent + '%',
+  timeout: 30000, // ms; give up on a hung upload instead of waiting forever
 });
 
 cancelButton.onclick = abort;
-const { status, responseText } = await promise;
+
+try {
+  const { status, responseText } = await promise;
+} catch (error) {
+  if (error.aborted) { /* cancelButton was clicked */ }
+  if (error.timedOut) { /* the upload didn't finish within `timeout` */ }
+}
 ```
 
 ## API
@@ -99,7 +106,7 @@ const { status, responseText } = await promise;
 | `readFileAsDataURL` | `(file: Blob) => Promise<string>` |
 | `loadImageWithRetry` | `(imgEl, src: string, options?: { delays?: number[], onGiveUp?: () => void }) => void` |
 | `cancelImageRetry` | `(imgEl) => void` |
-| `uploadWithProgress` | `(url, body, options?) => { promise: Promise<{status, responseText}>, abort: () => void }` |
+| `uploadWithProgress` | `(url, body, options?: { method?, headers?, onProgress?, timeout? }) => { promise: Promise<{status, responseText}>, abort: () => void }` |
 
 ## Why
 
