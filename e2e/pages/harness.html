@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>maatify-image-upright E2E harness</title>
+</head>
+<body>
+<input type="file" id="fileInput" />
+<img id="previewImg" alt="preview" />
+<script type="module">
+    import { normalizeOrientation, attachImagePreview } from '/src/index.js';
+
+    window.__upright = { normalizeOrientation, attachImagePreview };
+    window.__previewEvents = [];
+    window.__invalidEvents = [];
+
+    window.__attachPreview = (options = {}) => {
+        const input = document.getElementById('fileInput');
+        const img = document.getElementById('previewImg');
+        return attachImagePreview(input, img, {
+            ...options,
+            onInvalid: (file) => {
+                window.__invalidEvents.push(file.name);
+                if (typeof options.onInvalid === 'function') options.onInvalid(file);
+            },
+            onChange: (file, meta) => {
+                window.__previewEvents.push({
+                    name: file.name,
+                    type: file.type,
+                    size: file.size,
+                    filesSynced: meta.filesSynced,
+                });
+                if (typeof options.onChange === 'function') options.onChange(file, meta);
+            },
+        });
+    };
+
+    /**
+     * Decodes `file` in this real browser and returns its dimensions plus
+     * the color sampled a few pixels in from each corner — lets the spec
+     * assert the actual decoded pixels are upright, not just that some file
+     * came back.
+     */
+    window.__decodeCorners = async (file, inset = 4) => {
+        const bitmap = await createImageBitmap(file);
+        const canvas = document.createElement('canvas');
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(bitmap, 0, 0);
+        const sample = (x, y) => Array.from(ctx.getImageData(x, y, 1, 1).data.slice(0, 3));
+        return {
+            width: canvas.width,
+            height: canvas.height,
+            topLeft: sample(inset, inset),
+            topRight: sample(canvas.width - 1 - inset, inset),
+            bottomLeft: sample(inset, canvas.height - 1 - inset),
+            bottomRight: sample(canvas.width - 1 - inset, canvas.height - 1 - inset),
+        };
+    };
+
+    /**
+     * Rebuilds a File from bytes handed over from Node as base64, since
+     * Playwright's page.evaluate() arguments must be JSON-serializable.
+     */
+    window.__fileFromBase64 = (base64, name, type) => {
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        return new File([bytes], name, { type });
+    };
+
+    /**
+     * Dispatches one real `change` event per entry in `files`, back to back
+     * in the same synchronous tick (not awaited in between) — the way a
+     * user's two quick selections can genuinely overlap in-flight, and the
+     * only way to reliably reproduce that race through real DOM APIs:
+     * Playwright's own `setInputFiles()`, awaited twice, has enough
+     * round-trip latency between the two calls that the first selection's
+     * (fast, tiny-fixture) normalization always finishes before the second
+     * one starts, never actually overlapping.
+     */
+    window.__selectFilesSequentially = (files) => {
+        const input = document.getElementById('fileInput');
+        files.forEach(({ base64, name, type }) => {
+            const file = window.__fileFromBase64(base64, name, type);
+            const transfer = new DataTransfer();
+            transfer.items.add(file);
+            input.files = transfer.files;
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+    };
+</script>
+</body>
+</html>

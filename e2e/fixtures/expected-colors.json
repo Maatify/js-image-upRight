@@ -1,0 +1,26 @@
+{
+  "width": 240,
+  "height": 160,
+  "colors": {
+    "topLeft": [
+      255,
+      0,
+      0
+    ],
+    "topRight": [
+      0,
+      255,
+      0
+    ],
+    "bottomLeft": [
+      0,
+      0,
+      255
+    ],
+    "bottomRight": [
+      255,
+      255,
+      0
+    ]
+  }
+}
