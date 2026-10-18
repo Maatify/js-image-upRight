@@ -17,6 +17,12 @@
  * guarantee. A browser that can't decode the source format at all gets the
  * original file back unchanged; check the result's `type`/`name` if your
  * code needs to know whether conversion actually happened.
+ *
+ * For JPEG and PNG (the formats that don't need a format conversion),
+ * the file's EXIF `Orientation` tag is checked first: a file with no EXIF
+ * data at all (most screenshots and already-processed images) or an
+ * orientation of 1 is returned unchanged, skipping the lossy canvas
+ * re-encode entirely.
  */
 
 /**
@@ -78,6 +84,125 @@ function targetNameFor(file, targetType) {
     const originalName = file.name || 'image';
     const baseName = originalName.replace(/\.[^./\\]+$/, '');
     return (baseName || 'image') + extension;
+}
+
+/**
+ * Reads the TIFF IFD0 `Orientation` tag (0x0112) starting at `tiffStart`,
+ * where the TIFF header ("II" or "MM" + magic 42) itself begins.
+ *
+ * @param {DataView} view
+ * @param {number} tiffStart
+ * @returns {number|null} 1-8, or null if absent/unreadable.
+ */
+function parseTiffOrientation(view, tiffStart) {
+    if (tiffStart + 8 > view.byteLength) return null;
+
+    const byteOrderMarker = view.getUint16(tiffStart, false);
+    let littleEndian;
+    if (byteOrderMarker === 0x4949) littleEndian = true; // "II"
+    else if (byteOrderMarker === 0x4d4d) littleEndian = false; // "MM"
+    else return null;
+
+    if (view.getUint16(tiffStart + 2, littleEndian) !== 42) return null;
+
+    const ifd0Offset = view.getUint32(tiffStart + 4, littleEndian);
+    const dirStart = tiffStart + ifd0Offset;
+    if (dirStart < tiffStart || dirStart + 2 > view.byteLength) return null;
+
+    const entryCount = view.getUint16(dirStart, littleEndian);
+    for (let i = 0; i < entryCount; i++) {
+        const entryOffset = dirStart + 2 + i * 12;
+        if (entryOffset + 12 > view.byteLength) break;
+        if (view.getUint16(entryOffset, littleEndian) === 0x0112) {
+            const value = view.getUint16(entryOffset + 8, littleEndian);
+            return value >= 1 && value <= 8 ? value : null;
+        }
+    }
+    return null;
+}
+
+/**
+ * Finds the EXIF `Orientation` tag in a JPEG's APP1 segment, without
+ * parsing any other metadata.
+ *
+ * @param {DataView} view
+ * @returns {number|null}
+ */
+function findJpegExifOrientation(view) {
+    if (view.byteLength < 4 || view.getUint16(0, false) !== 0xffd8) return null;
+
+    let offset = 2;
+    while (offset + 4 <= view.byteLength) {
+        const marker = view.getUint16(offset, false);
+        if ((marker & 0xff00) !== 0xff00) break;
+        if (marker === 0xffd8 || marker === 0xffd9 || marker === 0xffda) break; // SOI/EOI/start-of-scan: no more metadata markers follow
+
+        const segmentLength = view.getUint16(offset + 2, false);
+        if (segmentLength < 2) break;
+
+        if (marker === 0xffe1) {
+            const exifHeader = offset + 4;
+            const hasExifSignature = exifHeader + 6 <= view.byteLength
+                && view.getUint32(exifHeader, false) === 0x45786966 // "Exif"
+                && view.getUint16(exifHeader + 4, false) === 0x0000;
+            if (hasExifSignature) return parseTiffOrientation(view, exifHeader + 6);
+        }
+
+        offset += 2 + segmentLength;
+    }
+    return null;
+}
+
+/**
+ * Finds the EXIF `Orientation` tag in a PNG's `eXIf` chunk (the chunk
+ * always precedes IDAT per the PNG spec, so it's safe to stop looking once
+ * image data starts).
+ *
+ * @param {DataView} view
+ * @returns {number|null}
+ */
+function findPngExifOrientation(view) {
+    if (view.byteLength < 8) return null;
+
+    let offset = 8; // past the 8-byte PNG signature
+    while (offset + 8 <= view.byteLength) {
+        const length = view.getUint32(offset, false);
+        const type = String.fromCharCode(
+            view.getUint8(offset + 4),
+            view.getUint8(offset + 5),
+            view.getUint8(offset + 6),
+            view.getUint8(offset + 7),
+        );
+        const dataStart = offset + 8;
+
+        if (type === 'eXIf') return parseTiffOrientation(view, dataStart);
+        if (type === 'IDAT' || type === 'IEND') break;
+
+        offset = dataStart + length + 4; // skip chunk data + its trailing CRC
+    }
+    return null;
+}
+
+/**
+ * Reads just enough of `file` to determine its EXIF `Orientation` tag,
+ * without parsing or allocating anything for the rest of the file's
+ * metadata. Only JPEG and PNG are supported (the only formats
+ * normalizeOrientation() can skip re-encoding for — see its caller).
+ *
+ * @param {File} file
+ * @param {string} type resolved `image/...` MIME type
+ * @returns {Promise<number|null>} 1-8, or null if there's no orientation tag
+ *   (or the file can't be parsed) — both treated the same way by the caller.
+ */
+async function readExifOrientation(file, type) {
+    try {
+        const view = new DataView(await file.arrayBuffer());
+        if (type === 'image/jpeg') return findJpegExifOrientation(view);
+        if (type === 'image/png') return findPngExifOrientation(view);
+        return null;
+    } catch {
+        return null;
+    }
 }
 
 function canvasToBlob(canvas, type, quality) {
@@ -184,6 +309,16 @@ export async function normalizeOrientation(file, options = {}) {
     if (typeof document === 'undefined' || typeof document.createElement !== 'function') return file;
 
     const targetType = targetTypeFor(type);
+
+    // No format conversion needed (JPEG stays JPEG, PNG stays PNG) — check
+    // whether there's actually an orientation to fix before paying for a
+    // lossy re-encode. A file with no EXIF tag at all (most screenshots and
+    // already-processed images) or an explicit orientation of 1 needs none.
+    if (targetType === type) {
+        const orientation = await readExifOrientation(file, type);
+        if (orientation === null || orientation === 1) return file;
+    }
+
     const quality = typeof options.quality === 'number' && options.quality > 0 && options.quality <= 1
         ? options.quality
         : 0.95;
