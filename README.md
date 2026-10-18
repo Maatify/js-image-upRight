@@ -108,6 +108,15 @@ try {
 | `cancelImageRetry` | `(imgEl) => void` |
 | `uploadWithProgress` | `(url, body, options?: { method?, headers?, onProgress?, timeout? }) => { promise: Promise<{status, responseText}>, abort: () => void }` |
 
+## Testing
+
+```bash
+npm test          # unit tests (node --test) — fast, no browser required
+npm run test:e2e  # real-browser E2E tests (Playwright) — see e2e/README.md
+```
+
+The unit suite fakes `createImageBitmap`/canvas/`XMLHttpRequest` entirely, so it verifies this library's own orchestration logic (calling the right functions, handling results, race-safety) but never exercises real EXIF orientation decoding or real HEIC decoding — that's delegated to the browser itself. [`e2e/`](e2e/) covers that gap with Playwright: real EXIF-rotated JPEG fixtures (one per orientation value 1-8) and a real HEIC fixture, run through `normalizeOrientation()` and `attachImagePreview()` in actual Chromium, Firefox, and WebKit, asserting the decoded pixels are genuinely upright.
+
 ## Why
 
 Extracted from a production image-upload flow where photos taken on an iPhone were appearing rotated after upload, and the live preview sometimes showed nothing at all for HEIC files the browser can't decode on its own. Fixing both at the point of file selection — rather than only at upload time — means what the user sees is always what gets stored.
