@@ -9,11 +9,15 @@
  *   method?: string,
  *   headers?: Record<string, string>,
  *   onProgress?: (percent: number, event: ProgressEvent) => void,
- * }} [options]
+ *   timeout?: number,
+ * }} [options] `timeout` (ms) aborts the upload itself if it hasn't
+ *   finished in time, rejecting with an error whose `timedOut` is `true` —
+ *   the counterpart of `abort()`'s `error.aborted`. Omit it (or 0) for no
+ *   timeout, matching the native `XMLHttpRequest.timeout` default.
  * @returns {{ promise: Promise<{status: number, responseText: string}>, abort: () => void }}
  */
 export function uploadWithProgress(url, body, options = {}) {
-    const { method = 'POST', headers = {}, onProgress } = options;
+    const { method = 'POST', headers = {}, onProgress, timeout } = options;
     const xhr = new XMLHttpRequest();
 
     const promise = new Promise((resolve, reject) => {
@@ -22,6 +26,10 @@ export function uploadWithProgress(url, body, options = {}) {
         Object.keys(headers).forEach((key) => {
             xhr.setRequestHeader(key, headers[key]);
         });
+
+        if (typeof timeout === 'number' && timeout > 0) {
+            xhr.timeout = timeout;
+        }
 
         if (xhr.upload && typeof onProgress === 'function') {
             xhr.upload.onprogress = (event) => {
@@ -49,6 +57,12 @@ export function uploadWithProgress(url, body, options = {}) {
         xhr.onabort = () => {
             const error = new Error('Upload aborted');
             error.aborted = true;
+            reject(error);
+        };
+
+        xhr.ontimeout = () => {
+            const error = new Error('Upload timed out');
+            error.timedOut = true;
             reject(error);
         };
 
